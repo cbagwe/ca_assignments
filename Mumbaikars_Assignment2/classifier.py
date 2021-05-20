@@ -29,6 +29,13 @@ def clean_text(text):
     # Return the cleaned version for this text
     return ' '.join(tokenized_clean_text)
 
+
+def check_spezial_verbs(text):
+    if "should" or "must" or "could" or "believe" or "wish" in text:
+        return 1
+
+    return 0
+
 #get training set
 with open("train-data-prepared.json", "r") as f:
     train_data = json.load(f)
@@ -59,9 +66,11 @@ val_df["cleaned_text"] = val_df["text"].apply(clean_text)
 
 #Feature Extraction
 #Number of characters
-charCount = train_df["text"].apply(len)
+train_df["char_count"] = train_df["text"].apply(len)
+val_df["char_count"] = val_df["text"].apply(len)
 #print(charCount)
-
+train_df["contains_verbs"] = train_df["text"].apply(check_spezial_verbs)
+val_df["contains_verbs"] = val_df["text"].apply(check_spezial_verbs)
 #Count Vectorization
 vectorizer = CountVectorizer()
 X_train_vectorised = vectorizer.fit_transform(train_df["cleaned_text"])
@@ -84,21 +93,19 @@ val_df["sentiment"] = val_df["text"].apply(lambda x:
 #print(train_df["sentiment"])
 
 #Classification
-X_train = train_df["sentiment"]
+X_train = np.array([train_df["sentiment"]])#,train_df["char_count"], train_df["contains_verbs"]])
+X_train = np.transpose(X_train)
 Y_train = train_df["label"]
-X_train = X_train.values.reshape(-1, 1)
 Y_train = Y_train.values.reshape(len(Y_train),)
-
-print(X_train)
-print(Y_train)
 
 clf = SVC(gamma="scale")
 clf.fit(X_train,Y_train)
 
-X_test = val_df["sentiment"]
+X_test = np.array([val_df["sentiment"]])#,val_df["char_count"], val_df["contains_verbs"]])
+X_test = np.transpose(X_test)
 Y_test = val_df["label"]
-X_test = X_test.values.reshape(-1, 1)
 Y_test = Y_test.values.reshape(len(Y_test),)
+
 
 Y_pred = clf.predict(X_test)
 
