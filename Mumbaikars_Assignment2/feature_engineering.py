@@ -2,6 +2,8 @@
 import json
 import pandas
 import spacy
+from sklearn.feature_extraction.text import CountVectorizer
+from textblob import TextBlob
 
 def clean_text(text):
     # Parse the text using the English language model
@@ -38,4 +40,24 @@ train_df = pandas.DataFrame(columns=train_keys,data=train_data)
 nlp = spacy.load("en_core_web_sm")
 #clean the training set
 train_df["cleaned_text"] = train_df["text"].apply(clean_text)
-#print(train_df)
+# print(train_df)
+
+#Feature Extraction
+#Number of characters
+charCount = train_df["text"].apply(len)
+print(charCount)
+
+#Count Vectorization
+vectorizer = CountVectorizer()
+X = vectorizer.fit_transform(train_df["text"])
+print("X")
+print(X)
+vectorizer2 = CountVectorizer(analyzer='word', ngram_range=(1, 2))
+X2 = vectorizer2.fit_transform(train_df["text"])
+# print("X2")
+# print(vectorizer2.get_feature_names())
+
+#sentiment Analysis
+train_df["sentiment"] = train_df["text"].apply(lambda x: 
+                   TextBlob(x).sentiment.polarity)
+print(train_df["sentiment"])
