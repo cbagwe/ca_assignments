@@ -1,3 +1,4 @@
+import collections
 import json
 import nltk
 import numpy as np
@@ -24,6 +25,32 @@ with open("train-data-prepared.json", "r") as f:
 #get validation set
 with open("val-data-prepared.json", "r") as f:
     val_data = json.load(f)
+
+## utils function create new column for each tag category
+def utils_ner_features(lst_dics_tuples, tag):
+    if len(lst_dics_tuples) > 0:
+        tag_type = []
+        for dic_tuples in lst_dics_tuples:
+            for tuple in dic_tuples:
+                type, n = tuple[1], dic_tuples[tuple]
+                tag_type = tag_type + [type]*n
+                dic_counter = collections.Counter()
+                for x in tag_type:
+                    dic_counter[x] += 1
+        return dic_counter[tag]
+    else:
+        return 0
+
+def utils_lst_count(lst):
+    dic_counter = collections.Counter()
+    for x in lst:
+        dic_counter[x] += 1
+    dic_counter = collections.OrderedDict( 
+                     sorted(dic_counter.items(), 
+                     key=lambda x: x[1], reverse=True))
+    lst_count = [ (key,value) for key,value in dic_counter.items() ]
+    return lst_count
+
 
 def clean_text(text):
     # Parse the text using the English language model
@@ -60,9 +87,8 @@ def clean_text(text):
 
     #for token in tokenized_stemclean_text:
     tokenized_pos_tag = nltk.pos_tag(tokenized_stemclean_text)
-    #print(nltk.ne_chunk(tokenized_pos_tag).toarray())
-    #return nltk.ne_chunk(tokenized_pos_tag).toarray()
     # Return the cleaned version for this text
+    #return utils_lst_count(tokenized_pos_tag)
     return tokenized_pos_tag
 
 corpus_data = train_data + val_data
@@ -139,8 +165,8 @@ clf.fit(x_train,y_train)
 x_train_pred = clf.predict(x_train) 
 x_test_pred = clf.predict(x_test)
 
-print(x_train_pred)
-print(y_train.values)
+# print(x_train_pred)
+# print(y_train.values)
 
 print("Accuracy for train data:",metrics.accuracy_score(y_train, x_train_pred))
 print("Accuracy for test data:",metrics.accuracy_score(y_test, x_test_pred))
@@ -154,6 +180,17 @@ print("Recall test:",metrics.recall_score(y_test, x_test_pred))
 print("F1 score train:",metrics.f1_score(y_train, x_train_pred))
 print("F1 score test:",metrics.f1_score(y_test, x_test_pred))
 
+output_dict = {}
+for i in range(len(val_data)):
+    output_dict[val_data[i]["id"]] = int(x_test_pred[i])
+
+with open('result.json', 'w') as fp:
+    json.dump(output_dict, fp)
+
+#print(output_dict)
+
+
+
 # SVM + Bag Of Words = 33%
 # SVM + TDIDF = 27%
 # NB + BOW = 36%
@@ -166,3 +203,4 @@ print("F1 score test:",metrics.f1_score(y_test, x_test_pred))
 # SVM + BOW + Stem + POS = 39%
 # SVM + TDIDF + BOW + Stem + POS = 32%
 # SVM + BOW + Stem + POS + GridCV = 47%
+# SVM + BOW + Stem + POS + + GridCV + NER = 46.9%
