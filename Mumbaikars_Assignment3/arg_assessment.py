@@ -9,6 +9,7 @@ from nltk.stem import PorterStemmer
 from numpy import dot
 from numpy.linalg import norm
 from sklearn import metrics
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.svm import SVC
 from textblob import TextBlob
 from tqdm import tqdm
@@ -19,7 +20,7 @@ def clean_text(text):
     clean_text = []
     for token in parsed_text:
         stop_flag = (token.is_punct or token.is_space or  
-                 token.like_url or token.is_stop)
+                 token.like_url)
         if (not stop_flag):
             clean_text.append(re.sub('[^A-Za-z0-9]+', ' ',token.text.lower()))
             
@@ -31,7 +32,7 @@ def stem_text(text):
 
 # counts the number of abusive words in a text
 def count_insults(text):
-    insult_words = ["ass", "idiot", "fuck", "shit", "racist"]
+    insult_words = ["ass", "idiot", "fuck", "shit"]
     counter = 0
     for word in text:
         if word in insult_words:
@@ -39,49 +40,57 @@ def count_insults(text):
             
     return counter
 
-# for each thread gather primary vectors for each dialogue in the thread
+# counts the number of pos tag in a text
+def get_number(list_of_tuple, key):
+    counter = 0
+    for (word,tag) in list_of_tuple:
+        if key in tag:
+            counter = counter + 1
+    return counter
+
+# for each thread gather primary features for each dialogue in the thread
+# primary features -> length of argument, insults, pos tags,sentiment
 def gather_data(thread):
     returnObj = {}
     for i in range(len(thread["preceding_posts"])):
         comment_data = {}
         comment = thread["preceding_posts"][i]
-        # clean and stemmed text
+        # clean text
         comment_data["text"] = stem_text(comment["body"])
-        # Length just in case of Godwin's Law
-        comment_data["char_length_vec"] = [len("".join(clean_text(comment["body"])))]
+        # length just in case of Godwin's Law
+        comment_data["char_length_vec"] = [len("".join(comment_data["text"]))]
         # check for some common insults
         comment_data["insults_vec"] = [count_insults(comment_data["text"])]
-        # get sentiment
+        # calculate number of POS tags
+        sentence_tags = TextBlob(comment["body"]).tags
+        comment_data["count_pos"] = [
+            get_number(sentence_tags, 'NN'), 
+            get_number(sentence_tags, 'VBP'),
+            get_number(sentence_tags, 'MD'), 
+            get_number(sentence_tags, 'PRP')
+            ]
+        # get sentiment data
         sentiment = TextBlob(' '.join(comment_data["text"])).sentiment
         comment_data["sentiment"] =  [sentiment.polarity, sentiment.subjectivity]
-        feature_vec = comment_data["char_length_vec"] + comment_data["insults_vec"] + comment_data["sentiment"]
-        
+        # merge into one vector
+        feature_vec = comment_data["char_length_vec"] + comment_data["insults_vec"] + comment_data["sentiment"] + comment_data["count_pos"]
         returnObj[" ".join(comment_data["text"])] = feature_vec
-        # dict object with the text as key and list of feature values as its value
         
     return returnObj
 
 # checks if the dialogues in a given thread are 
 # strictly increasing or decreasing in a particular property
-def get_delta_in_sentences(array, index, increasing_flag = False):
+def is_increased(array, index):
     values = [x[index] for x in array]
-    if len(values) == 2:
-        ret_answer = values[0] < values[1]
-    else:
-        ret_answer1 = values[0] < values[1]
-        ret_answer2 = values[1] < values[2]
-        ret_answer = ret_answer1 & ret_answer2
-        
-    if increasing_flag:
-        return int(ret_answer)
-    else:
-        return int(not ret_answer)
+    ret_answer = values[0] < values[1]
+    return int(ret_answer)
 
 # to find trends of the thread,
 # calculate secondary features from the previously calculated primary features
-# secondary features = cosine similarity/distance, avg, std deviation, 
+# secondary features = cosine similarity, avg polarity, avg insults, 
 # increasing or decreasing trends 
 def combine_vectors(ddict):
+    (insults_index, polar_index) = (1,2)
     feature_vectors = list(ddict.values())
     # for cosine similarity and cosine distance
     # calculate dot product and product of norm of vectors 
@@ -90,32 +99,26 @@ def combine_vectors(ddict):
     # For some vectors, the product of norm is so less 
     # that python "considers" it as zero. 
     # Eg: Long float point numbers with very large negative exponents
-    if norms_product == 0: 
-        cos_sim = 1.0
+    if norms_product == 0:
+        cos_sim = 1
     else:
         cos_sim = dot_product/norms_product
-    
-    is_author_turn_next = 1 - (len(feature_vectors)%2)
-    count_dialogues = len(feature_vectors)
-    avg_length = np.average([x[1] for x in feature_vectors])
-    
-    insults_count = np.sum([x[1] for x in feature_vectors])
-    increasing_insults = get_delta_in_sentences(feature_vectors, 1, True)
-    
-    avg_polarity = np.average([x[-2] for x in feature_vectors])
-    stddev_polarity = np.std([x[-2] for x in feature_vectors])
-    avg_subjectivity = np.average([x[-1] for x in feature_vectors])
-    stddev_subjectivity = np.std([x[-1] for x in feature_vectors])
-    is_decreasing_polarity = get_delta_in_sentences(feature_vectors, -2)
-    is_increasing_polarity = get_delta_in_sentences(feature_vectors, -2, True)
-    is_decreasing_subjectivity = get_delta_in_sentences(feature_vectors, -1)
-    is_increasing_subjectivity = get_delta_in_sentences(feature_vectors, -1, True)
+    # average and increasing thrend in number of insults
+    avg_insults = np.average([x[insults_index] for x in feature_vectors])
+    is_increasing_insults = is_increased(feature_vectors, insults_index)
+    # average and increasing thrend in polarity
+    avg_polarity = np.average([x[polar_index] for x in feature_vectors])
+    is_increasing_polarity = is_increased(feature_vectors, polar_index)
+    # final vector for one thread
+    return [avg_insults, is_increasing_insults, avg_polarity, is_increasing_polarity,  cos_sim]
 
-    # Return final feature vector of thread
-    return [is_author_turn_next, count_dialogues, avg_length, insults_count, 
-        increasing_insults, avg_polarity, stddev_polarity, avg_subjectivity, 
-        stddev_subjectivity, is_decreasing_polarity, is_increasing_polarity, 
-        is_decreasing_subjectivity, is_increasing_subjectivity, cos_sim]
+# concatinate dialogues for bow
+def concatAllStringForBoW(listOfDict):
+    return_obj = []
+    for d_dict in listOfDict:
+        return_obj.append(" ".join(list(d_dict.keys())))
+        
+    return return_obj  
 
 # write final prediction output in result.json file
 def write_to_json_file(dataset, key, pred):
@@ -169,7 +172,20 @@ def main():
     x_train = [combine_vectors(thread) for thread in tqdm(entire_dataset['train_prep'])]
     x_val = [combine_vectors(thread) for thread in tqdm(entire_dataset['val_prep'])]
     x_test = [combine_vectors(thread) for thread in tqdm(entire_dataset['test_prep'])]
-    # fetch labels for classification
+    # concatinate all dialogues to pass as input for bow
+    train_bow_input = concatAllStringForBoW(entire_dataset["train_prep"])
+    val_bow_input = concatAllStringForBoW(entire_dataset["val_prep"])
+    test_bow_input = concatAllStringForBoW(entire_dataset["test_prep"])
+    # bow
+    vectorizer = CountVectorizer()
+    train_bow = vectorizer.fit_transform(train_bow_input).toarray().tolist()
+    val_bow = vectorizer.transform(val_bow_input).toarray().tolist()
+    test_bow = vectorizer.transform(test_bow_input).toarray().tolist()
+    # merge bow and computed "secondary" vector
+    [x_train[i].extend(train_bow[i]) for i in tqdm(range(len(x_train)))]
+    [x_val[i].extend(val_bow[i]) for i in tqdm(range(len(x_val)))]
+    [x_test[i].extend(test_bow[i]) for i in tqdm(range(len(x_test)))] 
+
     y_train = entire_dataset["train_label"]
     y_val = entire_dataset["val_label"]
     y_test = entire_dataset["test_label"]
@@ -178,7 +194,7 @@ def main():
     clf = SVC()
     # train the model
     clf.fit(x_train,y_train)
-    # testing phase
+    # prediction phase
     val_pred = clf.predict(x_val)
     test_pred = clf.predict(x_test)
 
